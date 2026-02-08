@@ -1,6 +1,6 @@
 {
-  "name": "Smart Logistics Intelligence Dashboard",
-  "description": "A high-end, real-time logistics tracking and intelligence platform featuring interactive global maps, predictive routing via Gemini AI, and comprehensive shipment management.",
+  "name": "HyperRoute Fleet Command",
+  "description": "High-performance last-mile delivery intelligence dashboard with H3 spatial indexing and Gemini AI operations coaching.",
   "requestFramePermissions": [
     "geolocation"
   ]
