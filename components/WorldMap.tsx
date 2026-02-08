@@ -1,14 +1,12 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
-import { Share2, Layers } from 'lucide-react';
+import { Share2, Layers, Crosshair, Map as MapIcon } from 'lucide-react';
 import { Delivery } from '../types';
 import * as h3 from 'h3-js';
 
 const GEO_URL = "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson";
-
-// Global cache to prevent re-fetching map data on remounts
-let cachedGeoData: any = null;
+let globalGeoCache: any = null;
 
 interface WorldMapProps {
   deliveries: Delivery[];
@@ -18,46 +16,53 @@ export const WorldMap: React.FC<WorldMapProps> = ({ deliveries }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [isMapReady, setIsMapReady] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  // 1. Memoize H3 Grouping to keep main thread free
-  const h3Data = useMemo(() => {
-    const resolution = Math.min(11, Math.max(6, Math.floor(6 + Math.log2(zoomLevel))));
+  const clusterData = useMemo(() => {
+    // Zoom-aware Resolution Scaling
+    // Low Zoom (1-5): Resolution 3-5 (Big clusters)
+    // High Zoom (10+): Resolution 9-11 (Individual buildings)
+    const res = Math.min(11, Math.max(3, Math.floor(3 + Math.log2(zoomLevel) * 0.8)));
     const groups: Record<string, { count: number, deliveries: Delivery[], lat: number, lng: number }> = {};
     
-    deliveries.forEach(s => {
-      const currentLat = s.pickup.lat + (s.dropoff.lat - s.pickup.lat) * s.progress;
-      const currentLng = s.pickup.lng + (s.dropoff.lng - s.pickup.lng) * s.progress;
-      const h3Index = h3.latLngToCell(currentLat, currentLng, resolution);
+    deliveries.forEach(d => {
+      const curLat = d.pickup.lat + (d.dropoff.lat - d.pickup.lat) * d.progress;
+      const curLng = d.pickup.lng + (d.dropoff.lng - d.pickup.lng) * d.progress;
+      const index = h3.latLngToCell(curLat, curLng, res);
       
-      if (!groups[h3Index]) {
-        const [cellLat, cellLng] = h3.cellToLatLng(h3Index);
-        groups[h3Index] = { count: 0, deliveries: [], lat: cellLat, lng: cellLng };
+      if (!groups[index]) {
+        const [cLat, cLng] = h3.cellToLatLng(index);
+        groups[index] = { count: 0, deliveries: [], lat: cLat, lng: cLng };
       }
-      groups[h3Index].count++;
-      groups[h3Index].deliveries.push(s);
+      groups[index].count++;
+      groups[index].deliveries.push(d);
     });
-    return { groups, resolution };
+    
+    return { groups, res };
   }, [deliveries, zoomLevel]);
 
   useEffect(() => {
     if (!svgRef.current || !containerRef.current) return;
 
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight;
-    const svg = d3.select(svgRef.current).attr("viewBox", [0, 0, width, height] as any);
+    let width = containerRef.current.clientWidth;
+    let height = containerRef.current.clientHeight;
     
+    // Ensure we don't render on 0 dimensions
+    if (width === 0 || height === 0) return;
+
+    const svg = d3.select(svgRef.current).attr("viewBox", [0, 0, width, height] as any);
     svg.selectAll("*").remove();
     const g = svg.append("g");
+
     const projection = d3.geoMercator()
-      .scale(width * 0.8)
-      .center([-74.0060, 40.7128])
+      .scale(width * 0.6) // Global view scale
+      .center([-30, 20]) // Centered for global coverage
       .translate([width / 2, height / 2]);
 
     const path = d3.geoPath().projection(projection);
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([1, 1000])
+      .scaleExtent([1, 5000])
       .on("zoom", (event) => {
         g.attr("transform", event.transform);
         setZoomLevel(event.transform.k);
@@ -65,7 +70,7 @@ export const WorldMap: React.FC<WorldMapProps> = ({ deliveries }) => {
 
     svg.call(zoom);
 
-    const draw = (data: any) => {
+    const render = (data: any) => {
       // Landmass
       g.append("g")
         .selectAll("path")
@@ -77,94 +82,91 @@ export const WorldMap: React.FC<WorldMapProps> = ({ deliveries }) => {
         .attr("stroke", "#1a1a1a")
         .attr("stroke-width", 0.5);
 
-      const updateContent = () => {
-        g.selectAll(".dynamic-layer").remove();
-        const contentLayer = g.append("g").attr("class", "dynamic-layer");
+      const drawUpdates = () => {
+        g.selectAll(".content-layer").remove();
+        const layer = g.append("g").attr("class", "content-layer");
 
-        // Hexagons
-        // Renaming shadowed 'data' to 'groupData' and adding explicit cast to fix unknown property access error
-        (Object.entries(h3Data.groups) as [string, { count: number, deliveries: Delivery[], lat: number, lng: number }][]).forEach(([index, groupData]) => {
+        // H3 Hex Grid Layer
+        (Object.entries(clusterData.groups) as [string, any][]).forEach(([index, group]) => {
           const boundary = h3.cellToBoundary(index);
-          const points = boundary.map(p => projection([p[1], p[0]]));
+          const pts = boundary.map(p => projection([p[1], p[0]]));
           
-          if (points.every(p => p)) {
-            // Fix: groupData is now correctly typed, allowing access to .count
-            const density = Math.min(1, groupData.count / 3);
-            contentLayer.append("path")
-              .datum(points)
+          if (pts.every(p => p)) {
+            const opacity = Math.min(0.5, group.count * 0.15);
+            layer.append("path")
+              .datum(pts)
               .attr("d", d3.line() as any)
-              .attr("fill", `rgba(34, 211, 238, ${0.1 + density * 0.4})`)
-              .attr("stroke", "rgba(34, 211, 238, 0.2)")
+              .attr("fill", group.count > 1 ? `rgba(34, 211, 238, ${opacity})` : "none")
+              .attr("stroke", "rgba(34, 211, 238, 0.1)")
               .attr("stroke-width", 0.1 / zoomLevel);
           }
         });
 
-        // Vehicles
-        contentLayer.selectAll(".marker")
-          .data(Object.values(h3Data.groups))
+        // Markers
+        const markers = layer.selectAll(".marker")
+          .data(Object.values(clusterData.groups))
           .enter()
           .append("g")
           .attr("transform", (d: any) => {
-            const loc = d.count === 1 
-              ? [d.deliveries[0].pickup.lng + (d.deliveries[0].dropoff.lng - d.deliveries[0].pickup.lng) * d.deliveries[0].progress,
-                 d.deliveries[0].pickup.lat + (d.deliveries[0].dropoff.lat - d.deliveries[0].pickup.lat) * d.deliveries[0].progress]
-              : [d.lng, d.lat];
-            const p = projection(loc as [number, number]);
+            const p = projection([d.lng, d.lat]);
             return p ? `translate(${p})` : null;
-          })
-          .each(function(d: any) {
-            const el = d3.select(this);
-            const size = Math.max(1, 4 / Math.sqrt(zoomLevel));
-            
-            if (d.count > 1 && zoomLevel < 50) {
-              el.append("circle").attr("r", size * 2.5).attr("fill", "#0e7490").attr("stroke", "#22d3ee").attr("stroke-width", 0.5 / zoomLevel);
-              el.append("text").attr("text-anchor", "middle").attr("dy", ".35em").attr("fill", "white").style("font-size", `${size * 2}px`).text(d.count);
-            } else {
-              const priority = d.deliveries[0].priority === 'high';
-              el.append("circle").attr("r", size).attr("fill", priority ? '#ef4444' : '#22d3ee');
-              if (['OUT_FOR_DELIVERY', 'PICKED_UP'].includes(d.deliveries[0].status)) {
-                el.append("circle").attr("r", size).attr("fill", "none").attr("stroke", priority ? '#ef4444' : '#22d3ee').attr("stroke-width", 0.2 / zoomLevel)
-                  .append("animate").attr("attributeName", "r").attr("from", size).attr("to", size * 5).attr("dur", "2s").attr("repeatCount", "indefinite");
-              }
-            }
           });
+
+        markers.each(function(d: any) {
+          const el = d3.select(this);
+          const size = Math.max(0.5, 4 / Math.sqrt(zoomLevel));
+
+          if (d.count > 1 && zoomLevel < 200) {
+            el.append("circle").attr("r", size * 2.8).attr("fill", "#0891b2").attr("stroke", "#22d3ee").attr("stroke-width", 0.5 / zoomLevel);
+            el.append("text").attr("text-anchor", "middle").attr("dy", ".35em").attr("fill", "white").style("font-size", `${size * 2.2}px`).style("font-weight", "900").text(d.count);
+          } else {
+            const s = d.deliveries[0];
+            const isCritical = s.priority === 'high';
+            el.append("circle").attr("r", size).attr("fill", isCritical ? '#ef4444' : '#22d3ee');
+            if (['OUT_FOR_DELIVERY', 'PICKED_UP'].includes(s.status)) {
+              el.append("circle").attr("r", size).attr("fill", "none").attr("stroke", isCritical ? '#ef4444' : '#22d3ee').attr("stroke-width", 0.2 / zoomLevel)
+                .append("animate").attr("attributeName", "r").attr("from", size).attr("to", size * 6).attr("dur", "3s").attr("repeatCount", "indefinite");
+            }
+          }
+        });
       };
-      updateContent();
-      setIsMapReady(true);
+      drawUpdates();
+      setIsLoaded(true);
     };
 
-    if (cachedGeoData) {
-      draw(cachedGeoData);
+    if (globalGeoCache) {
+      render(globalGeoCache);
     } else {
       d3.json(GEO_URL).then(data => {
-        cachedGeoData = data;
-        draw(data);
-      });
+        globalGeoCache = data;
+        render(data);
+      }).catch(() => setIsLoaded(true));
     }
-  }, [h3Data, zoomLevel]);
+  }, [clusterData, zoomLevel]);
 
   return (
-    <div ref={containerRef} className="relative flex-1 h-full bg-[#050505] overflow-hidden ui-shell-init">
-      {!isMapReady && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[#050505] z-50">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-12 h-12 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
-            <span className="text-[10px] font-black text-cyan-500 uppercase tracking-widest">Booting Geo-Core...</span>
+    <div ref={containerRef} className="relative flex-1 h-full bg-[#050505] map-loading-grid overflow-hidden ui-shell-init">
+      {!isLoaded && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-50">
+          <div className="flex flex-col items-center gap-3">
+             <div className="w-8 h-8 border-2 border-cyan-500/10 border-t-cyan-500 rounded-full animate-spin" />
+             <span className="text-[10px] font-black text-cyan-400 tracking-[0.2em] uppercase">Syncing World View</span>
           </div>
         </div>
       )}
       
       <div className="absolute top-6 left-6 z-10 pointer-events-none">
-         <span className="text-[10px] font-black text-neutral-500 uppercase tracking-[0.3em] block">Sector 7G-NYC</span>
-         <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">H3 Grid: {h3Data.resolution}</span>
+         <span className="text-[10px] font-black text-neutral-500 uppercase tracking-[0.3em] block">Operational Matrix v1.1</span>
+         <span className="text-[10px] font-bold text-cyan-500 uppercase">H3 Level: {clusterData.res}</span>
       </div>
 
       <div className="absolute top-6 right-6 z-10 flex gap-2">
-        <button className="w-9 h-9 bg-black/60 backdrop-blur border border-neutral-800 rounded-lg flex items-center justify-center text-neutral-500 hover:text-white transition-all"><Share2 size={14} /></button>
-        <button className="w-9 h-9 bg-black/60 backdrop-blur border border-neutral-800 rounded-lg flex items-center justify-center text-neutral-500 hover:text-white transition-all"><Layers size={14} /></button>
+        <button className="w-10 h-10 bg-black/60 backdrop-blur-lg border border-neutral-800 rounded-2xl flex items-center justify-center text-neutral-400 hover:text-white transition-all"><Crosshair size={16} /></button>
+        <button className="w-10 h-10 bg-black/60 backdrop-blur-lg border border-neutral-800 rounded-2xl flex items-center justify-center text-neutral-400 hover:text-white transition-all"><Layers size={16} /></button>
+        <button className="w-10 h-10 bg-black/60 backdrop-blur-lg border border-neutral-800 rounded-2xl flex items-center justify-center text-neutral-400 hover:text-white transition-all"><Share2 size={16} /></button>
       </div>
 
-      <svg ref={svgRef} className="w-full h-full cursor-crosshair" />
+      <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
     </div>
   );
 };
