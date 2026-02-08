@@ -22,6 +22,16 @@ export interface Delivery {
   priority: 'low' | 'medium' | 'high';
 }
 
+export interface Geofence {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  radius: number; // in meters
+  active: boolean;
+  type: 'RESTRICTED' | 'HUB' | 'CUSTOMER_ZONE';
+}
+
 export interface Marker {
   id: string;
   type: 'vehicle' | 'hub' | 'warning' | 'cluster';

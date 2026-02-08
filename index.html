@@ -10,6 +10,8 @@
     <link rel="dns-prefetch" href="https://esm.sh">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <!-- Google Maps API - Using placeholder for development -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=&libraries=geometry,drawing"></script>
     <style>
         html, body, #root {
             height: 100%;
@@ -37,6 +39,10 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #262626; border-radius: 10px; }
         
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 10px; }
+
         /* Grid background for map while loading */
         .map-loading-grid {
             background-image: radial-gradient(#151515 1px, transparent 1px);
