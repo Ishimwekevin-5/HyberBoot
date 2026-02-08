@@ -6,7 +6,16 @@ export interface Location {
   name: string;
   lat: number;
   lng: number;
+  h3Index?: string; // Res 9 index
   address?: string;
+}
+
+export interface HexMetrics {
+  h3Index: string;
+  chargePerKm: number;
+  timeToCrossMins: number;
+  avgDistanceKm: number;
+  congestionFactor: number;
 }
 
 export interface Delivery {
@@ -18,8 +27,16 @@ export interface Delivery {
   vehicleType: 'van' | 'bike' | 'truck' | 'electric';
   startTime: string;
   estimatedArrival: string;
-  progress: number; // 0 to 1
+  progress: number;
   priority: 'low' | 'medium' | 'high';
+  h3Current?: string; // Current location in H3
+  delayReason?: string;
+  metrics?: {
+    hexDistance: number;
+    congestionScore: number;
+    basePrice: number;
+    timeToDestination: number;
+  };
 }
 
 export interface Geofence {
@@ -27,15 +44,8 @@ export interface Geofence {
   name: string;
   lat: number;
   lng: number;
-  radius: number; // in meters
+  radius: number;
   active: boolean;
   type: 'RESTRICTED' | 'HUB' | 'CUSTOMER_ZONE';
-}
-
-export interface Marker {
-  id: string;
-  type: 'vehicle' | 'hub' | 'warning' | 'cluster';
-  lat: number;
-  lng: number;
-  value?: number;
+  h3Cell?: string;
 }
