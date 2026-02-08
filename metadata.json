@@ -1,0 +1,7 @@
+{
+  "name": "Smart Logistics Intelligence Dashboard",
+  "description": "A high-end, real-time logistics tracking and intelligence platform featuring interactive global maps, predictive routing via Gemini AI, and comprehensive shipment management.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
