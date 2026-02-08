@@ -1,31 +1,31 @@
 
-export type ShipmentStatus = 'IN TRANSIT' | 'PENDING' | 'ARRIVED' | 'DELAYED';
+export type DeliveryStatus = 'PENDING' | 'PICKED_UP' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'DELAYED';
 
 export interface Location {
   id: string;
   name: string;
   lat: number;
   lng: number;
-  code: string;
+  address?: string;
 }
 
-export interface Shipment {
+export interface Delivery {
   id: string;
-  status: ShipmentStatus;
-  origin: Location;
-  destination: Location;
-  departureDate: string;
-  arrivalDate: string;
-  duration: string;
-  type: 'air' | 'sea' | 'rail' | 'road';
+  status: DeliveryStatus;
+  pickup: Location;
+  dropoff: Location;
+  driverName: string;
+  vehicleType: 'van' | 'bike' | 'truck' | 'electric';
+  startTime: string;
+  estimatedArrival: string;
   progress: number; // 0 to 1
+  priority: 'low' | 'medium' | 'high';
 }
 
 export interface Marker {
   id: string;
-  type: 'plane' | 'ship' | 'truck' | 'warning' | 'cluster';
+  type: 'vehicle' | 'hub' | 'warning' | 'cluster';
   lat: number;
   lng: number;
   value?: number;
-  label?: string;
 }

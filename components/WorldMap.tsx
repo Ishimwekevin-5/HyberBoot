@@ -2,105 +2,232 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Plane, Ship, Truck, Train, Layers, Share2, Plus, Minus, AlertTriangle } from 'lucide-react';
+// Fix: Import Delivery instead of non-existent Shipment member
+import { Delivery } from '../types';
+import * as h3 from 'h3-js';
 
 const geoUrl = "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson";
 
-export const WorldMap: React.FC = () => {
+interface WorldMapProps {
+  // Fix: Use Delivery[] instead of Shipment[]
+  deliveries: Delivery[];
+}
+
+export const WorldMap: React.FC<WorldMapProps> = ({ deliveries }) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [zoom, setZoom] = useState(1);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
 
   useEffect(() => {
-    if (!svgRef.current) return;
+    if (!svgRef.current || !containerRef.current) return;
 
-    const width = 1200;
-    const height = 800;
+    const width = containerRef.current.clientWidth;
+    const height = containerRef.current.clientHeight;
 
     const svg = d3.select(svgRef.current)
-      .attr("viewBox", `0 0 ${width} ${height}`)
+      .attr("viewBox", [0, 0, width, height] as any)
       .style("background-color", "#050505");
 
-    const projection = d3.geoMercator()
-      .scale(180)
-      .translate([width / 2, height / 2 + 50]);
-
-    const path = d3.geoPath().projection(projection);
+    svg.selectAll("*").remove();
 
     const g = svg.append("g");
 
-    // Map base
+    const projection = d3.geoMercator()
+      .scale(width / (2 * Math.PI))
+      .translate([width / 2, height / 1.5]);
+
+    const path = d3.geoPath().projection(projection);
+
+    // Zoom behavior
+    const zoom = d3.zoom<SVGSVGElement, unknown>()
+      .scaleExtent([1, 20])
+      .on("zoom", (event) => {
+        g.attr("transform", event.transform);
+        setZoomLevel(event.transform.k);
+      });
+
+    svg.call(zoom);
+
+    // Initial load
     d3.json(geoUrl).then((data: any) => {
-      g.selectAll("path")
+      // Map base
+      g.append("g")
+        .selectAll("path")
         .data(data.features)
         .enter()
         .append("path")
-        .attr("d", path)
-        .attr("fill", "#111111")
-        .attr("stroke", "#222222")
+        .attr("d", path as any)
+        .attr("fill", "#0a0a0a")
+        .attr("stroke", "#1a1a1a")
         .attr("stroke-width", 0.5);
 
-      // Add some grid lines
-      const graticule = d3.geoGraticule();
-      g.append("path")
-        .datum(graticule())
-        .attr("class", "graticule")
-        .attr("d", path)
-        .attr("fill", "none")
-        .attr("stroke", "#1a1a1a")
-        .attr("stroke-width", 0.3);
+      const updateMap = () => {
+        g.selectAll(".h3-layer").remove();
+        g.selectAll(".shipment-layer").remove();
 
-      // Mock Markers (Aircraft/Ships)
-      const points = [
-        { lat: 40.71, lng: -74, type: 'plane', label: 'JFK-12' },
-        { lat: 31.23, lng: 121.47, type: 'ship', label: 'SH-44' },
-        { lat: 51.5, lng: -0.12, type: 'plane', label: 'LHR-09' },
-        { lat: 25.2, lng: 55.27, type: 'warning', label: 'DELAY' },
-        { lat: -23.55, lng: -46.63, type: 'ship', label: 'SAO-01' },
-      ];
+        // 1. Determine H3 Resolution based on Zoom Level
+        // Low zoom = low resolution (large hexagons), High zoom = high resolution (small hexagons)
+        const resolution = Math.min(7, Math.max(1, Math.floor(zoomLevel * 0.8)));
+        
+        // 2. Group Deliveries by H3 Cell
+        // Fix: Update type definition to use Delivery and rename key
+        const h3Groups: Record<string, { count: number, deliveries: Delivery[], lat: number, lng: number }> = {};
+        
+        deliveries.forEach(s => {
+          // Fix: Use pickup/dropoff instead of origin/destination
+          // Current position estimation based on progress
+          const currentLat = s.pickup.lat + (s.dropoff.lat - s.pickup.lat) * s.progress;
+          const currentLng = s.pickup.lng + (s.dropoff.lng - s.pickup.lng) * s.progress;
+          const h3Index = h3.latLngToCell(currentLat, currentLng, resolution);
+          
+          if (!h3Groups[h3Index]) {
+            const [cellLat, cellLng] = h3.cellToLatLng(h3Index);
+            h3Groups[h3Index] = {
+              count: 0,
+              deliveries: [],
+              lat: cellLat,
+              lng: cellLng
+            };
+          }
+          h3Groups[h3Index].count++;
+          h3Groups[h3Index].deliveries.push(s);
+        });
 
-      g.selectAll(".marker")
-        .data(points)
-        .enter()
-        .append("circle")
-        .attr("cx", d => projection([d.lng, d.lat])![0])
-        .attr("cy", d => projection([d.lng, d.lat])![1])
-        .attr("r", 4)
-        .attr("fill", d => d.type === 'warning' ? '#fbbf24' : '#22d3ee')
-        .attr("class", "marker")
-        .style("filter", "drop-shadow(0 0 4px #22d3ee)");
+        const h3Layer = g.append("g").attr("class", "h3-layer");
+        const shipmentLayer = g.append("g").attr("class", "shipment-layer");
 
-      // Animated paths (simulated routes)
-      const routes = [
-        [[-118.24, 34.05], [121.47, 31.23]],
-        [[55.27, 25.2], [4.47, 51.92]],
-      ];
+        // 3. Render H3 Density Hexagons
+        Object.entries(h3Groups).forEach(([index, data]) => {
+          const boundary = h3.cellToBoundary(index);
+          const points = boundary.map(p => projection([p[1], p[0]]));
+          
+          if (points.every(p => p)) {
+            const density = Math.min(1, data.count / 5); // Scale color by count
+            h3Layer.append("path")
+              .datum(points)
+              .attr("d", d3.line() as any)
+              .attr("fill", `rgba(34, 211, 238, ${0.05 + density * 0.2})`)
+              .attr("stroke", "rgba(34, 211, 238, 0.2)")
+              .attr("stroke-width", 0.5 / zoomLevel);
+          }
+        });
 
-      routes.forEach(route => {
-        const line = d3.line()
-          .curve(d3.curveBasis)
-          .x(d => projection(d as [number, number])![0])
-          .y(d => projection(d as [number, number])![1]);
+        // 4. Render Markers (Clusters or Individual)
+        const markers = shipmentLayer.selectAll(".marker")
+          .data(Object.values(h3Groups))
+          .enter()
+          .append("g")
+          .attr("transform", (d: any) => {
+            // For single deliveries, use actual position for better visual accuracy
+            if (d.count === 1) {
+              const s = d.deliveries[0];
+              // Fix: Use pickup/dropoff instead of origin/destination
+              const lat = s.pickup.lat + (s.dropoff.lat - s.pickup.lat) * s.progress;
+              const lng = s.pickup.lng + (s.dropoff.lng - s.pickup.lng) * s.progress;
+              const projected = projection([lng, lat]);
+              return projected ? `translate(${projected})` : null;
+            }
+            const projectedGroup = projection([d.lng, d.lat]);
+            return projectedGroup ? `translate(${projectedGroup})` : null;
+          });
 
-        g.append("path")
-          .datum(route)
-          .attr("d", line as any)
-          .attr("fill", "none")
-          .attr("stroke", "#22d3ee")
-          .attr("stroke-width", 1)
-          .attr("stroke-dasharray", "4,4")
-          .style("opacity", 0.3);
-      });
+        markers.each(function(d: any) {
+          const el = d3.select(this);
+          if (d.count > 1) {
+            // Render Cluster Marker
+            el.append("circle")
+              .attr("r", Math.max(8, 14 / Math.sqrt(zoomLevel)))
+              .attr("fill", "#0e7490")
+              .attr("stroke", "#22d3ee")
+              .attr("stroke-width", 1.5 / Math.sqrt(zoomLevel))
+              .style("filter", "drop-shadow(0 0 6px rgba(34, 211, 238, 0.4))");
+            
+            el.append("text")
+              .attr("text-anchor", "middle")
+              .attr("dy", ".35em")
+              .attr("fill", "white")
+              .style("font-size", `${Math.max(7, 10 / Math.sqrt(zoomLevel))}px`)
+              .style("font-weight", "bold")
+              .style("pointer-events", "none")
+              .text(d.count);
+          } else {
+            // Render Single Delivery Marker
+            const s = d.deliveries[0];
+            const size = Math.max(3, 5 / Math.sqrt(zoomLevel));
+            
+            el.append("circle")
+              .attr("r", size)
+              .attr("fill", "#22d3ee")
+              .style("filter", "drop-shadow(0 0 4px #22d3ee)");
+            
+            // Pulsing effect for active deliveries
+            // Fix: Check for specific active statuses instead of 'IN TRANSIT'
+            if (['OUT_FOR_DELIVERY', 'PICKED_UP'].includes(s.status)) {
+              el.append("circle")
+                .attr("r", size)
+                .attr("fill", "none")
+                .attr("stroke", "#22d3ee")
+                .attr("stroke-width", 1 / zoomLevel)
+                .append("animate")
+                .attr("attributeName", "r")
+                .attr("from", size)
+                .attr("to", size * 3)
+                .attr("dur", "2s")
+                .attr("begin", "0s")
+                .attr("repeatCount", "indefinite");
+
+              el.append("circle")
+                .attr("r", size)
+                .attr("fill", "none")
+                .attr("stroke", "#22d3ee")
+                .attr("stroke-width", 0.5 / zoomLevel)
+                .attr("opacity", 1)
+                .append("animate")
+                .attr("attributeName", "opacity")
+                .attr("from", 1)
+                .attr("to", 0)
+                .attr("dur", "2s")
+                .attr("begin", "0s")
+                .attr("repeatCount", "indefinite");
+            }
+          }
+        });
+
+        // 5. Draw animated routes for active deliveries
+        // Fix: Use actual DeliveryStatus values for filtering and use pickup/dropoff
+        deliveries.filter(s => ['OUT_FOR_DELIVERY', 'PICKED_UP'].includes(s.status)).forEach(s => {
+          const route = [
+            [s.pickup.lng, s.pickup.lat],
+            [s.dropoff.lng, s.dropoff.lat]
+          ];
+          
+          const line = d3.line()
+            .curve(d3.curveBasis)
+            .x(d => projection(d as [number, number])![0])
+            .y(d => projection(d as [number, number])![1]);
+
+          shipmentLayer.append("path")
+            .datum(route)
+            .attr("d", line as any)
+            .attr("fill", "none")
+            .attr("stroke", "rgba(34, 211, 238, 0.15)")
+            .attr("stroke-width", 0.8 / zoomLevel)
+            .attr("stroke-dasharray", "4,4");
+        });
+      };
+
+      updateMap();
     });
 
-    return () => {
-      svg.selectAll("*").remove();
-    };
-  }, []);
+    // Fix: Add deliveries to dependency array
+  }, [deliveries, zoomLevel]);
 
   return (
-    <div className="relative flex-1 h-full bg-[#050505] overflow-hidden">
-      <div className="absolute top-6 left-6 z-10 flex flex-col gap-1">
-         <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">OCT 28, 2024</span>
-         <span className="text-[10px] font-bold text-neutral-300 uppercase tracking-widest">02:48 (UTC)</span>
+    <div ref={containerRef} className="relative flex-1 h-full bg-[#050505] overflow-hidden">
+      <div className="absolute top-6 left-6 z-10 flex flex-col gap-1 pointer-events-none">
+         <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">LIVE FLEET MONITOR</span>
+         <span className="text-[10px] font-bold text-neutral-300 uppercase tracking-widest">H3 CLUSTERING ON</span>
+         <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">ZOOM: {zoomLevel.toFixed(1)}x</span>
       </div>
 
       <div className="absolute top-6 right-6 z-10 flex gap-2">
@@ -109,15 +236,6 @@ export const WorldMap: React.FC = () => {
         </button>
         <button className="w-10 h-10 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white transition-colors">
           <Layers size={18} />
-        </button>
-      </div>
-
-      <div className="absolute right-6 top-1/2 -translate-y-1/2 z-10 flex flex-col gap-2">
-        <button className="w-10 h-10 bg-neutral-900 border border-neutral-800 rounded-t-lg flex items-center justify-center text-neutral-400 hover:text-white transition-colors">
-          <Plus size={18} />
-        </button>
-        <button className="w-10 h-10 bg-neutral-900 border border-neutral-800 rounded-b-lg flex items-center justify-center text-neutral-400 hover:text-white border-t-0 transition-colors">
-          <Minus size={18} />
         </button>
       </div>
 
@@ -130,27 +248,6 @@ export const WorldMap: React.FC = () => {
         <button className="text-neutral-500 hover:text-neutral-300 p-2"><Ship size={14} /></button>
         <button className="text-neutral-500 hover:text-neutral-300 p-2"><Truck size={14} /></button>
         <button className="text-neutral-500 hover:text-neutral-300 p-2"><Train size={14} /></button>
-      </div>
-
-      {/* Timeline */}
-      <div className="absolute bottom-0 inset-x-0 h-12 bg-neutral-950/50 border-t border-neutral-900 flex items-center px-4 gap-4">
-        <div className="text-[9px] font-bold text-neutral-600 w-16">11:00 AM</div>
-        <div className="flex-1 h-px bg-neutral-800 relative">
-          <div className="absolute top-1/2 left-1/4 -translate-y-1/2 w-0.5 h-6 bg-cyan-400"></div>
-          <div className="absolute -top-6 left-1/4 -translate-x-1/2 text-[9px] font-bold text-cyan-400">NOW</div>
-        </div>
-        <div className="text-[9px] font-bold text-neutral-600 w-16 text-right">05:10 PM</div>
-      </div>
-
-      {/* Warning markers overlay (Simulated) */}
-      <div className="absolute left-[30%] top-[40%] group pointer-events-none">
-        <div className="relative">
-           <AlertTriangle size={20} className="text-yellow-500 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)] animate-pulse" />
-           <div className="absolute top-6 left-0 bg-black/80 border border-yellow-500/30 backdrop-blur p-2 rounded text-[10px] w-32 opacity-0 group-hover:opacity-100 transition-opacity">
-              <p className="font-bold text-yellow-500 mb-1">STORM WARNING</p>
-              <p className="text-neutral-400">Severe weather in North Atlantic routes.</p>
-           </div>
-        </div>
       </div>
     </div>
   );

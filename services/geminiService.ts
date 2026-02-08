@@ -1,38 +1,32 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Fix: Strictly follow initialization guideline: new GoogleGenAI({ apiKey: process.env.API_KEY })
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-export const getSmartRouteInsight = async (origin: string, destination: string) => {
+export const getDeliveryIntelligence = async (deliveryId: string, driver: string, vehicle: string) => {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Provide a logistical risk assessment and optimization strategy for a shipment from ${origin} to ${destination}. Mention potential "Danger zones" (weather or regional delays) and recommend the most efficient modality (air, sea, rail). Return the response in a concise JSON structure.`,
+      contents: `You are a Delivery Operations AI. Analyze delivery ${deliveryId} assigned to driver ${driver} using a ${vehicle}. Provide operational insights: 1. Risk Level (Traffic/Weather). 2. Fleet Efficiency Tip. 3. Driver Safety Rating. Return a concise JSON structure.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            riskLevel: { type: Type.STRING, description: 'Low, Medium, or High' },
-            optimalModality: { type: Type.STRING },
-            dangerZones: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
+            riskLevel: { type: Type.STRING, description: 'Low, Medium, or Critical' },
+            efficiencyInsight: { type: Type.STRING },
+            driverWellnessScore: { type: Type.NUMBER, description: '1-100 score' },
             summary: { type: Type.STRING },
-            estimatedSavings: { type: Type.STRING, description: 'Percentage or dollar amount' }
+            suggestedAction: { type: Type.STRING }
           },
-          required: ['riskLevel', 'optimalModality', 'dangerZones', 'summary']
+          required: ['riskLevel', 'efficiencyInsight', 'driverWellnessScore', 'summary']
         }
       }
     });
 
-    // Fix: Access response.text as a property and trim it before parsing as per guideline example.
-    const text = response.text;
-    return JSON.parse(text?.trim() || '{}');
+    return JSON.parse(response.text?.trim() || '{}');
   } catch (error) {
-    console.error("Gemini Error:", error);
+    console.error("Gemini Intelligence Error:", error);
     return null;
   }
 };
