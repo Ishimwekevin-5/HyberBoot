@@ -1,12 +1,12 @@
 
 {
-  "name": "smart-logistics-intelligence-dashboard",
+  "name": "hyperroute-fleet-command",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
